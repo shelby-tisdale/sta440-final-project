@@ -1,0 +1,246 @@
+---
+title: "final_project"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: load-data-and-packages
+
+# packages
+library(tidyverse)
+library(janitor)
+library(e1071)
+library(bayesrules)
+
+# load data
+tuesdata <- tidytuesdayR::tt_load(2024, week = 37)
+
+college_admissions <- tuesdata$college_admissions |>
+  # select relevant variables
+  select(
+    super_opeid, name, par_income_bin, par_income_lab, rel_attend, stderr_rel_attend, rel_apply, stderr_rel_apply, tier, public, flagship 
+  )
+
+colleges <- college_admissions$name
+college_codes <- college_admissions$super_opeid
+
+# other college data 
+college_data <- read_csv("Most-Recent-Cohorts-Institution.csv") |>
+  select(INSTNM, OPEID, OPEID6, COSTT4_A, STABBR, HBCU, PBI, ANNHI, TRIBAL, AANAPII, HSI, NANTI) |>
+  mutate(minority_serving = if_else(HBCU == 1 | PBI == 1 | ANNHI == 1 | TRIBAL == 1 | AANAPII == 1 | HSI == 1, 1, 0)) |>
+    mutate(opeid_adj = as.numeric(str_replace(OPEID6, "^0+" ,""))) |>
+  filter(INSTNM %in% colleges | opeid_adj %in% college_codes) |>
+  filter(!is.na(COSTT4_A))
+```
+
+```{r}
+#| label: data-cleaning
+
+# create separate datasets
+college_attend <- college_admissions |>
+  select(-contains("apply"))
+
+college_apply <- college_admissions |>
+  select(-contains("attend"))
+
+# calculate most represented income groups for attendance and applications
+college_attend_max <- college_attend |>
+  group_by(name) |>
+  filter(rel_attend == max(rel_attend)) |>
+  ungroup() |>
+  mutate(inc_group_attend = par_income_lab,
+         inc_group_attend_bin = par_income_bin)
+
+college_apply_max <- college_apply |>
+  group_by(name) |>
+  filter(rel_apply == max(rel_apply)) |>
+  ungroup() |>
+  mutate(inc_group_apply = par_income_lab,
+         inc_group_apply_bin = par_income_bin)
+
+# create full dataset for analysis
+colleges_full <- college_attend_max |>
+  inner_join(college_apply_max, by = join_by(super_opeid, name, tier, public, flagship)) |>
+  left_join(college_data, by = join_by(super_opeid == opeid_adj)) |>
+  clean_names() |>
+  mutate(inc_group_apply = factor(inc_group_apply),
+         inc_group_attend = factor(inc_group_attend),
+         inc_group_apply = fct_reorder(inc_group_apply, inc_group_apply_bin),
+         inc_group_attend = fct_reorder(inc_group_attend, inc_group_attend_bin),
+         tier = factor(tier),
+         tier = fct_relevel(tier, c("Selective private", "Selective public", "Highly selective private", "Highly selective public", "Other elite schools (public and private)", "Ivy Plus"))) |>
+    select(name, tier, public, flagship, inc_group_attend, inc_group_apply, costt4_a, stabbr, minority_serving) |>
+  filter(!is.na(costt4_a)) |>
+  group_by(name) |>
+  mutate(costt4_a = mean(costt4_a)) |>
+  ungroup() |>
+  distinct() |>
+  mutate(inc_group_attend = fct_collapse(
+    inc_group_attend,
+    "0-20"="0-20",
+    "20-60" = c("20-40", "40-60"),
+    "60-90" = c("80-90"),
+    "90-99.9" = c("90-95", "95-96", "96-97", "97-98", "98-99", "99-99.9"),
+    "Top 1" = "Top 0.1"))
+```
+
+```{r}
+#| label: eda
+
+colleges_full |>
+  ggplot(aes(fill = tier, x = inc_group_attend)) +
+  geom_bar(position = "fill") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Dark2") +
+  theme(legend.position = "top",
+        legend.title.position = "top") +
+  guides(fill=guide_legend(nrow = 2, title = "Selectivity Tier")) +
+  labs(
+    fill = "Selectivity Tier",
+    y = "Proportion of Universities",
+    x = "Parent household income group \n(based on percentile in the income distribution)",
+    title = "Most represented household income of college attendees",
+    subtitle = "by income group and selectivity")
+
+colleges_full |>
+  mutate(minority_serving = factor(minority_serving)) |>
+  ggplot(aes(fill = minority_serving, x = inc_group_attend)) +
+  geom_bar(position = "fill") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  scale_fill_brewer(palette = "Dark2") +
+  guides(fill=guide_legend(nrow = 1, title = "Minority Serving Institution Status")) +
+  labs(
+    fill = "Minority Serving Institution Status",
+    y = "Proportion of Universities",
+    x = "Parent household income group \n(based on percentile in the income distribution)",
+    title = "Most represented household income of college attendees",
+    subtitle = "by income group and minority-serving institution status")
+
+colleges_full |>
+  ggplot(aes(x = costt4_a, fill = inc_group_attend)) +
+  geom_density(alpha =.5) +
+  facet_wrap(~inc_group_attend, ncol = 1) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Dark2") +
+  theme(strip.background = element_blank(),
+        strip.text = element_blank(),
+        legend.position = "top",
+        axis.text.y = element_blank()
+        ) +
+  labs(
+    fill = "Parent household income percentile",
+    x = "Cost of Attendance for Academic Year",
+    y = NULL,
+    title = "University cost of attendance",
+    subtitle = "by most respresented household income percentile group")
+```
+
+```{r}
+# label: check-model-conditions
+
+# naive bayes assumes quantitative predictors are continuous and conditionally normal.
+
+# assessing normality
+
+# Calculate sample mean and sd for each Y group
+colleges_full |>
+  group_by(inc_group_attend) |> 
+  summarize(mean = mean(costt4_a, na.rm = TRUE), 
+            sd = sd(costt4_a, na.rm = TRUE))
+
+ggplot(colleges_full, aes(x = costt4_a, color = inc_group_attend)) + 
+  stat_function(fun = dnorm, args = list(mean = 41674.50, sd = 17183.32), 
+                aes(color = "0-20"), size = 1.5) +
+  stat_function(fun = dnorm, args = list(mean = 40191.60, sd = 24499.73), 
+                aes(color = "20-60"), size = 1.5) +
+  stat_function(fun = dnorm, args = list(mean = 36748.33, sd = 28791.67),
+                aes(color = "60-90"), size = 1.5) +
+  stat_function(fun = dnorm, args = list(mean = 54133.33, sd = 25237.14),
+                aes(color = "90-99.9"), size = 1.5) +
+  stat_function(fun = dnorm, args = list(mean = 74756.69, sd = 18227.88),
+                aes(color = "Top 1"), size = 1.5) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Dark2") +
+  guides(color = guide_legend(title = "household income \npercentile"))+
+  labs(title = "Estimated Normal distributions of cost of attendance",
+       subtitle = "By most represented income percentile group",
+       x = "Cost of attendance",
+       y = NULL) +
+  theme(axis.text.y = element_blank())
+```
+
+```{r}
+# label: create-naive-bayes-models
+
+naive_colleges_1 <- naiveBayes(
+  inc_group_attend ~ costt4_a + tier + minority_serving + flagship,
+  data = colleges_full)
+
+naive_colleges_2 <- naiveBayes(
+  inc_group_attend ~ costt4_a + tier,
+  data = colleges_full)
+
+naive_colleges_3 <- naiveBayes(
+  inc_group_attend ~ costt4_a + tier + minority_serving,
+  data = colleges_full)
+```
+
+```{r}
+#| label: model-comparison
+
+set.seed(812)
+
+# confusion matrices
+
+# prediction using college data
+colleges_full_pred <- colleges_full |>
+  mutate(class_1 = predict(naive_colleges_1, newdata = colleges_full),
+         class_2 = predict(naive_colleges_2, newdata = colleges_full),
+         class_3 = predict(naive_colleges_3, newdata = colleges_full))
+
+# confusion matrix for model 1
+colleges_full_pred |> 
+  tabyl(inc_group_attend, class_1) |> 
+  adorn_percentages("row") |> 
+  adorn_pct_formatting(digits = 2) |>
+  adorn_ns()
+
+# accuracy rate: 0.4233
+(49+3+6)/137
+
+# confusion matrix for model 2
+colleges_full_pred |> 
+  tabyl(inc_group_attend, class_2) |> 
+  adorn_percentages("row") |> 
+  adorn_pct_formatting(digits = 2) |>
+  adorn_ns()
+# accuracy rate: 0.5985
+(51+31)/137
+
+# confusion matrix for model 3
+colleges_full_pred |> 
+  tabyl(inc_group_attend, class_3) |> 
+  adorn_percentages("row") |> 
+  adorn_pct_formatting(digits = 2) |>
+  adorn_ns()
+# accuracy rate: 0.2118
+(6+4+19)/137
+
+# 10-fold cross validation for model 2
+cv_model_2 <- naive_classification_summary_cv(
+  model = naive_colleges_2, data = colleges_full, y = "inc_group_attend", k = 10)
+
+# classification accuracy rates for each of the 10 folds
+cv_model_2$folds
+cv_model_2$cv
+
+# average accuracy rate: 0.5827
+(1+30+50)/139
+```
+
+```{r}
+# model results
+summary(naive_colleges_2)
+```
