@@ -1,7 +1,17 @@
 ---
-title: "final_project"
-format: html
+format: pdf
 editor: visual
+echo: false
+output: false
+documentclass: article
+message: false
+warning: false
+cache: true
+geometry:
+  - left=.5in
+  - right=.5in
+  - top=.5in
+  - bottom=.5in
 ---
 
 ```{r}
@@ -10,6 +20,7 @@ editor: visual
 # packages
 library(tidyverse)
 library(janitor)
+library(gt)
 library(e1071)
 library(bayesrules)
 
@@ -88,7 +99,7 @@ colleges_full <- college_attend_max |>
 ```{r}
 #| label: eda
 
-colleges_full |>
+eda1 <- colleges_full |>
   ggplot(aes(fill = tier, x = inc_group_attend)) +
   geom_bar(position = "fill") +
   theme_minimal() +
@@ -103,7 +114,7 @@ colleges_full |>
     title = "Most represented household income of college attendees",
     subtitle = "by income group and selectivity")
 
-colleges_full |>
+eda2 <- colleges_full |>
   mutate(minority_serving = factor(minority_serving)) |>
   ggplot(aes(fill = minority_serving, x = inc_group_attend)) +
   geom_bar(position = "fill") +
@@ -118,7 +129,7 @@ colleges_full |>
     title = "Most represented household income of college attendees",
     subtitle = "by income group and minority-serving institution status")
 
-colleges_full |>
+eda3 <- colleges_full |>
   ggplot(aes(x = costt4_a, fill = inc_group_attend)) +
   geom_density(alpha =.5) +
   facet_wrap(~inc_group_attend, ncol = 1) +
@@ -234,13 +245,119 @@ cv_model_2 <- naive_classification_summary_cv(
 
 # classification accuracy rates for each of the 10 folds
 cv_model_2$folds
-cv_model_2$cv
+cv_model_2$cv |> gt::gt()
+
+cv_gt <- cv_model_2$cv |> gt::gt()
 
 # average accuracy rate: 0.5827
 (1+30+50)/139
 ```
 
 ```{r}
-# model results
-summary(naive_colleges_2)
+# visualizing model results
+
+```
+
+# Predicting Most Represented Socioeconomic Status of College Attendees with Naive Bayes Classfication
+
+**Shelby Tisdale**
+
+## Abstract
+
+**Introduction**
+
+In the United States, the value of an undergraduate degree for achieving financial security and career success during adulthood is almost universally recognized. However, research on academic achievement and social mobility has shed light on the many barriers to attaining a postsecondary degree for students from low-income families. In recent years, many selective universities have vocalized a commitment to recruiting low-income students, which has resulted in increased financial aid and new initiatives to support students from diverse socioeconomic backgrounds.
+
+This project seeks to examine whether we can classify universities according to the most represented income percentile group of undergraduate students' parents, given information on a university's selectivity, institution type, and average yearly cost of attendance. Additionally, we consider factors such as whether the unversity is designated as a minority-serving institution or a flagship university.
+
+**Data**
+
+Data for this project was obtained from the [TidyTuesday GitHub Respository](https://github.com/rfordatascience/tidytuesday/blob/main/data/2024/2024-09-10/readme.md) and includes information on economic diversity and student outcomes for 137 U.S. undergraduate institutions, obtained via millions of anonymous tax filings and tuition records. Data is originally from [Opportunity Insights](https://opportunityinsights.org/), a nonprofit policy research organization at Harvard University, and insights from this data were featured in a [2017 article in the New York Times column, The Upshot.](https://www.nytimes.com/interactive/2017/01/18/upshot/some-colleges-have-more-students-from-the-top-1-percent-than-the-bottom-60.html) Relevant variables for this analysis included parent household income group based on percentile in income distribution, relative attendance rate for each income group (defined as weighted fraction of students attending a given college among all SAT test-takers in the sample, reported as a proportion of the mean attendance rate across all parent income bins for each college), the "tier" of the university, which corresponded to a combination of selectivity and type as defined by a 2009 index created by [Barron's](https://www.barrons.com/).
+
+Additionally, we include variables from the [U.S. Department of Education College Scorecard](https://collegescorecard.ed.gov/)*,* including university cost of attendance and whether the institution is designated as a minority-serving institution, as defined by the U.S. Department of Education.
+
+The two datasets were joined by insitution OPEID, a unique identifier for each academic institution, and for each university we counted which income group had the highest relative proportion of students attending the university, which will be referred to as the dominant income percentile for the university. Then we collapsed the granular income categories into five percentile categories: "0-20", "20-60", "60-90", "90-99.9" and "Top 1 Percent".
+
+**Methodology**
+
+Because our response variable of interest was a categorical variable with more than two categories, a Naive Bayes classification model was chosen to evaluate the research question. Naive bayes classification is a useful alternative to logistic regression in scenarios where the response variable is categorical but not binary. The model condition of conditional normality and continuity of quantitative predictors was assessed through exploratory data analysis (Figure 3 in Appendix). We note that while for some categories, the predictors were multimodal, which may affect predictive accuracy. Three models were created, and a final model was chosen based on accuracy of predictions assessed through classification analysis and 10-fold cross validation.
+
+**Results**
+
+Of the three models created, the final chosen model included only two variables: "tier" of institution, and average cost of attendance, as predictors of the dominant household income percentile for the undergraduate institutions in the sample. This model outperformed classification models which included other variables of interest, such as minority institution status and flagship university status. The chosen model had an overall predictive accuracy of 58.27 percent, calculated via 10-fold cross validation. The model performed best when classifying institutions where attendees were from the Top 1 percent, with 86.21 percent accuracy. However, the model did not correctly classify any of the universities where students were primarily from the 20-40 and 60-90 percentile groups.
+
+**Discussion**
+
+Overall, our model demonstrates that selectivity, institution type, and cost of attendance can be used to classify which schools are serving high proportions of low- or high-income students with relatively high accuracy, while there are clearly other factors which relate to socioeconomic diversity which were not included in this study. It is clear from both the model and the exploratory visualizations that students from higher income groups are more represented in more elite universities, especially private universities. Students from lower income groups are more represented at less-selective and public universities. One limitation of the Naive Bayes classification approach is that the model does not include coefficients, as would a linear or logistic regression model, so we obtain only classifications from the model, rather than a quantification of the relationship between the predictors and the response. We also note the rigid assumptions of normality of predictors and that the data used in this study only partially aligns with this assumption. Future work should explore other factors which may contribute to socioeconomic diversity and explore how other statistical approaches, such as linear and logistic regression may provide further insights into the classifications made in this analysis.
+
+# Methodology
+
+**Modeling Approach**
+
+Because the research question related to classifying each university into one of several categories, it was not reasonable to work with a standard variation of a regression model such as a linear regression model or a logistic regression model. While logistic regression models are only useful for classifying observations into binary categories, naive Bayes classification
+
+**Model Design**
+
+**Assessing Model Conditions**
+
+**Prediction and Classification**
+
+```{r}
+original_table <- cv_model_2$cv
+
+cv_gt |>
+  tab_header(title = "Naive Bayes classification accuracy of dominant income percentile of students at selective universities",
+             subtitle = "based on selectivity tier and cost of attendance") |>
+  tab_spanner(label = md("**Predicted**"),
+              columns = c("0-20", "20-60", "60-90", "90-99.9", "Top 1"))|>
+  cols_label(inc_group_attend = md("**Actual**")) |>
+  tab_style(
+    locations = cells_body(columns = "0-20", rows = 1),
+    style = cell_fill(color = "lightblue")) |>
+  tab_style(
+    locations = cells_body(columns = "20-60", rows = 2),
+    style = cell_fill(color = "lightblue")) |>
+  tab_style(
+    locations = cells_body(columns = "60-90", rows = 3),
+    style = cell_fill(color = "lightblue")) |>
+  tab_style(
+    locations = cells_body(columns = "90-99.9", rows = 4),
+    style = cell_fill(color = "lightblue")) |>
+  tab_style(
+    locations = cells_body(columns = "Top 1", rows = 5),
+    style = cell_fill(color = "lightblue"))
+```
+
+# References
+
+-   <https://www.bayesrulesbook.com/chapter-14>
+
+-   <https://www.nytimes.com/interactive/2017/01/18/upshot/some-colleges-have-more-students-from-the-top-1-percent-than-the-bottom-60.html>
+
+-   <https://github.com/rfordatascience/tidytuesday/blob/main/data/2024/2024-09-10/readme.md>
+
+# Appendix
+
+```{r}
+#| output: true
+#| fig-width: 6
+#| fig-height: 6
+#| fig-cap: Household income percentiles by selectivity tier
+eda1
+```
+
+```{r}
+#| output: true
+#| fig-width: 6
+#| fig-height: 6
+#| fig-cap: Household income percentiles by minority-serving institution status
+eda2
+```
+
+```{r}
+#| output: true
+#| fig-width: 6
+#| fig-height: 6
+#| fig-cap: Household income percentiles by cost of attendance
+eda3
 ```
